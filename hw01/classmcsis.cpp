@@ -13,6 +13,7 @@
 #include <fstream>
 #include <string>
 #include <iterator>
+#include <stdexcept>
 
 
 class McSIS {
@@ -44,6 +45,8 @@ public:
 	word registers[nregisters];
 	// Register numbers used as index in key 0
 	enum {
+		not_a_register=-1,
+		constant0=0,
 		r1=1,
 		r2=2,
         r3=3,
@@ -67,7 +70,7 @@ public:
 		op_sub=0xfe
 	};
 	enum {
-		comp_eq=0xF,
+		comp_eq=0xE,
         comp_lt=2,
 		
 	};
@@ -201,15 +204,45 @@ const char * compare_op_name[n_op]={
 	}
 	
 	// When CPU hit an illegal operation:
-	void illegal(std::string why) {
+	int illegal(std::string why) {
 		std::cout<<"FATAL> "<<why<<"\n";
-		
-		// dump_registers();
-		
+		dump_registers();
 		stop=true;
+		throw std::runtime_error(why);
+		return -1;
 	}
 	
 // Assembly support:
+// Assembly support:
+	// Return a register, or not_a_register
+	int assemble_register_or_not(std::string operand)
+	{
+		for (int r=0;r<nregisters;r++)
+			if (operand==register_name[r])
+				return r;
+		return not_a_register;
+	}
+	
+	// Return a register, or error illegal
+	int assemble_register_for_X(std::string operand)
+	{
+		int r=assemble_register_or_not(operand);
+		if (r!=not_a_register)
+			return r;
+		return illegal("Not a register: "+operand);
+	}
+	// Return a register, or error illegal
+	int assemble_register_for_K(std::string operand)
+	{
+		int r=assemble_register_or_not(operand);
+		if (r!=not_a_register)
+		{
+			if (r==constant0) return illegal("Can't use $0 as a key (key 0 means register access)");
+			if (r==PX) return illegal("Can't use PX as a key (this means a constant)");
+			return r;
+		}
+		return illegal("Not a register: "+operand);
+	}
 	word assemble_operand(std::string operand)
 	{
 		// Check if it's a register (0/ encoding)
@@ -226,13 +259,22 @@ const char * compare_op_name[n_op]={
 				illegal("can't assemble "+operand);
 		}
 		// Check if it's a hashtable access
-		if (operand[0]=='h')
-			illegal("Not smart enough to assemble hashtable refs yet");
+		if (operand[0]=='h'){
+			auto hashref=operand.substr(0,10);
+			if (hashref!="hashtable[")illegal("Can't parse "+operand+": missing hashtable?");
+			std::string k=operand.substr(10,2);
+			char slash=operand[12];
+			if (slash!='/') illegal("Can't parse "+operand+": missing slash?");
+			std::string x=operand.substr(13,2);
+			char close=operand[15];
+			if (close!=']') illegal("Can't parse "+operand+": missing close?");
+			return (assemble_register_for_K(k)<<4)+(assemble_register_for_X(x));
         if (operand == "==")
             return (0x4<<4)+comp_eq;
         else
-            illegal("Unknown operand type "+operand);
+            return (illegal("Unknown operand type "+operand));
 		return 0;
+		}
 	}
 	
 	// Remove trailing comma from string
@@ -257,15 +299,15 @@ const char * compare_op_name[n_op]={
         if (opcode == "exit"){
             return inst;
         }
-        if (opcode[0] == 'C'){
+        if (opcode[0] == 'i'){
 		    for (auto i=0; i < 6; i++){
                 std::string D; in>>D; D=decomma(D);
                 nested = nested + D + " ";
 
             }
             lowbits = assemble_instruction(nested);
-            auto start = opcode.find("[");
-            auto end = opcode.find("]");
+            auto start = opcode.find("(");
+            auto end = opcode.find(")");
             auto new_opcode = opcode.substr(start + 1, (end - start)-1 );
             auto comp1 = new_opcode.substr(0,2);
             std::string operand;
@@ -274,14 +316,14 @@ const char * compare_op_name[n_op]={
                 operand = new_opcode.substr(2,2);
                 comp2 = new_opcode.substr(4,2);
             }
-            if (new_opcode.length() == 5){
+            else if (new_opcode.length() == 5){
                 operand = new_opcode.substr(2,1);
                 comp2 = new_opcode.substr(3,2);
                 
             }
-            highbits = highbits | assemble_operand(comp1)<<60;
-            highbits = highbits | assemble_operand(operand)<<56;
-            highbits = highbits | assemble_operand(comp2)<<52;
+            highbits = highbits | assemble_operand(comp1)<<32;
+            highbits = highbits | assemble_operand(operand)<<36;
+            highbits = highbits | assemble_operand(comp2)<<40;
             inst = highbits | lowbits;
             return inst;
             illegal("we cant handle smaller right now....");
@@ -333,7 +375,7 @@ const char * compare_op_name[n_op]={
 			word A  = (cond>>8)&0xF;
 			word op = (cond>>4)&0xF;
 			word B  = (cond>>0)&0xF;
-			out<<"Conditional["<<register_name[A]<<compare_op_name[op]<<register_name[B]<<"] ";
+			out<<"if("<<register_name[A]<<compare_op_name[op]<<register_name[B]<<") ";
 		}
 		
 		word overrides = inst>>8; 
@@ -383,6 +425,17 @@ const char * compare_op_name[n_op]={
 			disassemble_instruction(fetch,out);
 		}
 	}
+	void print_program(word inst, std::ostream &out=std::cout){
+		word highbits = inst>>32;
+		word lowbits = inst & 0xffffffff;
+		out<<std::hex<<std::setfill('0');
+		if (highbits)
+			out<<"0x"<<std::setw(8)<<highbits;
+		else
+			out<<"        0x";
+		out<<std::setfill('0')<<std::setw(8)<<lowbits<<"   ";
+		out<<std::endl;
+	}
 };
 
 
@@ -392,21 +445,13 @@ long foo(std::vector<std::string> & tester)
 	
 	McSIS::word program[]={
 		0x010081ff,
-		
 		0x0 // terminating zero
 	};
 	McSIS m(program);
     for (auto i:tester){
-        m.disassemble_instruction(m.assemble_instruction(i));
+        m.print_program(m.assemble_instruction(i));
     }
-
-	m.disassemble();
-	
-	m.hashtable(17,23)=-1;
-	
 	long v=m.run();
-	m.dump_registers();
-    std::cout.clear();
 	return v;
 }
 
