@@ -1,3 +1,4 @@
+#old version of an idea.
 mov r1, $1 # load start state 
 mov r3, $0 <- index of tape
 mov DK, $9 <- key of tape
@@ -5,8 +6,8 @@ mov DX, r3 <- vlaue at index on tape
 mov r2, hashtable[DK,DX] <- save the value in the tape to r2
 mov r5, $1 <- lsb #states
 mov r6, $2 <- car #states
-Conditional[r1 = r5] mov PX, $lsb <- state check
-Conditional[r1 = r6] mov PX, $car <- state check
+if(r1==r5) mov PX, $lsb <- state check
+Conditional[r1=r6] mov PX, $car <- state check
 mov PX, $53
 mov r4, $0 <- car block case 0
 Conditional[r2 == r4] mov PX, $15
