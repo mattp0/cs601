@@ -15,8 +15,7 @@
 #include <iterator>
 #include <stdexcept>
 
-
-class McSIS {
+class McSis {
 public:
 	typedef signed long long word; // 64-bit type
 	typedef word key;  // area of memory
@@ -69,11 +68,7 @@ public:
 		op_add=0xff,
 		op_sub=0xfe
 	};
-	enum {
-		comp_eq=0xE,
-        comp_lt=2,
-		
-	};
+	
 const char *register_name[nregisters]={
 "$0", 
 "r1", 
@@ -95,12 +90,14 @@ const char *register_name[nregisters]={
 
 enum {n_op=16};
 const char * compare_op_name[n_op]={
-"   "," < "," 2?"," 3?",
+"   ",  "<"," 2?"," 3?",
 " 4?"," 5?"," 6?"," 7?",
 " 8?"," 9?"," A?"," B?",
-" C?"," D?","=="," F?",
+" C?"," D?", "==", "!=",
 };
 	
+	// If true, print a bunch of stuff as it happens
+	bool debug=false;
 	
 	// Storage access, either internal or external
 	inline word & hashtable(const key &k,const index &x) 
@@ -114,12 +111,14 @@ const char * compare_op_name[n_op]={
 	{
 		if (K==0) return registers[X]; // register access
 		if (K==8) return X; // constant
+		if (debug) std::cout<<"Reading hashtable at "<<registers[K]<<"/"<<registers[X]<<std::endl;
 		return hashtable(registers[K],registers[X]);
 	}
 	word &write_operand(word K,word X)
 	{
 		if (K==0) return registers[X]; // register access
 		if (K==8) illegal("write to constant?!"); 
+		if (debug) std::cout<<"Writing hashtable at "<<registers[K]<<"/"<<registers[X]<<std::endl;
 		return hashtable(registers[K],registers[X]);
 	}
 	
@@ -134,8 +133,11 @@ const char * compare_op_name[n_op]={
 			word op = (cond>>4)&0xF;
 			word B  = (cond>>0)&0xF;
 			
-			if (op==0xE) if (registers[A] != registers[B]) return; // skip instruction
-			if (op==0x1) if (registers[A] >= registers[B]) return; // skip instruction
+			bool do_it=true;
+			if (op==0x1) do_it = (registers[A] < registers[B]);
+			if (op==0xE) do_it = (registers[A] == registers[B]);
+			if (op==0xF) do_it = (registers[A] != registers[B]);
+			if (!do_it) return; //<- skip instructions that failed compare
 		}
 		
 		word overrides = inst>>8; 
@@ -166,16 +168,20 @@ const char * compare_op_name[n_op]={
 		while (!stop && --leash>0) {
 			word fetch=hashtable(registers[PK],registers[PX]++);
 			if (fetch==0) break;
+			if (debug) disassemble_instruction(fetch);
 			runi(fetch);
+			if (debug) dump_registers();
 		}
-		if (leash<=0) illegal("ran too long");
+		if (leash<=0) 
+			std::cout<< "leash reached!" << std::endl;
+			return 0;
 		
 		return registers[1];
 	}
 
 	word leash; // instructions remaining to execute
 	// Create a simulator with a block of program machine code
-	McSIS(const word code[], word leash_=100) 
+	McSis(const word code[], word leash_=880) 
 		:registers{0}
 	{
 		stop=false;
@@ -187,7 +193,7 @@ const char * compare_op_name[n_op]={
 	void set_program(const word code[])
 	{
 		registers[PK]=0xC0DE;
-		registers[PX]=0;
+		registers[PX]=0x0;
 		for (int i=0;;i++) {
 			hashtable(registers[PK],i)=code[i];
 			if (code[i]==0) break; //<- zero terminate your programs!
@@ -200,19 +206,20 @@ const char * compare_op_name[n_op]={
 	{
 		for (int r=0;r<16;r++)
 			out<<register_name[r]<<"="<<std::hex<<registers[r]<<" ";
-        out<<std::endl;
+		out<<"\n";
 	}
 	
 	// When CPU hit an illegal operation:
 	int illegal(std::string why) {
 		std::cout<<"FATAL> "<<why<<"\n";
+		
 		dump_registers();
+		
 		stop=true;
 		throw std::runtime_error(why);
-		return -1;
+		return -1; // <- flag to caller: everything is broken
 	}
 	
-// Assembly support:
 // Assembly support:
 	// Return a register, or not_a_register
 	int assemble_register_or_not(std::string operand)
@@ -243,25 +250,29 @@ const char * compare_op_name[n_op]={
 		}
 		return illegal("Not a register: "+operand);
 	}
+	
+	// Return bits of instruction that encode this operand
 	word assemble_operand(std::string operand)
 	{
 		// Check if it's a register (0/ encoding)
-		for (int r=0;r<nregisters;r++)
-			if (operand==register_name[r])
-				return (0x0<<4)+r;
+		int r=assemble_register_or_not(operand);
+		if (r!=not_a_register)
+			return (0x0<<4)+r;
+		
 		// Check if it's a constant ($ encoding)
 		if (operand[0]=='$') {
 			operand=operand.erase(0,1); // remove the $, leave the number
-			int value=std::stoi(operand,0,10);
+			int value=std::stoi(operand,0,16);
 			if (value>=0 && value<16)
 				return (0x8<<4)+value;
 			else
 				illegal("can't assemble "+operand);
 		}
 		// Check if it's a hashtable access
-		if (operand[0]=='h'){
-			auto hashref=operand.substr(0,10);
-			if (hashref!="hashtable[")illegal("Can't parse "+operand+": missing hashtable?");
+		if (operand[0]=='h') {
+			//illegal("Not smart enough to assemble hashtable refs yet");
+			std::string hashref=operand.substr(0,10);
+			if (hashref!="hashtable[") illegal("Can't parse "+operand+": missing hashtable?");
 			std::string k=operand.substr(10,2);
 			char slash=operand[12];
 			if (slash!='/') illegal("Can't parse "+operand+": missing slash?");
@@ -269,12 +280,9 @@ const char * compare_op_name[n_op]={
 			char close=operand[15];
 			if (close!=']') illegal("Can't parse "+operand+": missing close?");
 			return (assemble_register_for_K(k)<<4)+(assemble_register_for_X(x));
-        if (operand == "==")
-            return (0x4<<4)+comp_eq;
-        else
-            return (illegal("Unknown operand type "+operand));
-		return 0;
 		}
+		illegal("Unknown operand type "+operand);
+		return 0;
 	}
 	
 	// Remove trailing comma from string
@@ -288,50 +296,49 @@ const char * compare_op_name[n_op]={
 		return s;
 	}
 
+	word assemble_condition(std::string compare_op)
+	{
+		for (int c=0;c<n_op;c++)
+			if (compare_op==compare_op_name[c])
+				return c;
+		return illegal("not a valid comparison operator: "+compare_op);
+	}
+	
+	word assemble_conditional(std::string condstr)
+	{
+		std::string A=condstr.substr(3,2);
+		
+		std::string cond=condstr.substr(5);
+		int len=1;
+		if (cond[1]=='=') { // two-char conditional: ==, !=, >=, <=
+			len=2;
+		}
+		std::string B=cond.substr(len,2);
+		if (cond[len+2]!=')') return illegal("Didn't find close paren in if statement");
+		
+		return (assemble_register_for_X(A)<<8)+
+			(assemble_condition(cond.substr(0,len))<<4)+
+			(assemble_register_for_X(B)<<0);
+	}
+
 	word assemble_instruction(std::string line)
 	{
-        std::string nested = "";
 		std::istringstream in(line);
 		word inst=0;
-        word highbits = inst>>32;
-        word lowbits = inst & 0xffffffff;
+		
 		std::string opcode; in>>opcode;
-        if (opcode == "exit"){
-            return inst;
-        }
-        if (opcode[0] == 'i'){
-		    for (auto i=0; i < 6; i++){
-                std::string D; in>>D; D=decomma(D);
-                nested = nested + D + " ";
-
-            }
-            lowbits = assemble_instruction(nested);
-            auto start = opcode.find("(");
-            auto end = opcode.find(")");
-            auto new_opcode = opcode.substr(start + 1, (end - start)-1 );
-            auto comp1 = new_opcode.substr(0,2);
-            std::string operand;
-            std::string comp2;
-            if (new_opcode.length() == 6){
-                operand = new_opcode.substr(2,2);
-                comp2 = new_opcode.substr(4,2);
-            }
-            else if (new_opcode.length() == 5){
-                operand = new_opcode.substr(2,1);
-                comp2 = new_opcode.substr(3,2);
-                
-            }
-            highbits = highbits | assemble_operand(comp1)<<32;
-            highbits = highbits | assemble_operand(operand)<<36;
-            highbits = highbits | assemble_operand(comp2)<<40;
-            inst = highbits | lowbits;
-            return inst;
-            illegal("we cant handle smaller right now....");
-        }
+		if (opcode.rfind("if(", 0) == 0) { // starts with a conditional
+			std::string condstr=opcode;
+			
+			inst += assemble_conditional(condstr)<<32;
+			
+			in>>opcode;
+		}
+		
 		std::string D; in>>D; D=decomma(D);
 		std::string A; in>>A; A=decomma(A);
 		std::string B; in>>B; B=decomma(B);
-		
+		if (opcode=="exit") return inst;
 		if (opcode=="add") inst+=op_add;
 		if (opcode=="mov") {
 			inst+=op_add;
@@ -339,7 +346,7 @@ const char * compare_op_name[n_op]={
 			A="$0";
 		}
         if (opcode=="sub") inst+=op_sub;
-
+		
 		// Add the overrides to the instruction:
 		inst = inst | assemble_operand(D)<<24;
 		inst = inst | assemble_operand(A)<<16;
@@ -353,7 +360,7 @@ const char * compare_op_name[n_op]={
 	{
 		if (K==0) out<<register_name[X]<<""; // register access
 		else if (K==8) out<<"$"<<X; // constant
-		else  out<<"hashtable["<<register_name[K]<<","<<register_name[X]<<"]";
+		else  out<<"hashtable["<<register_name[K]<<"/"<<register_name[X]<<"]";
 	}
 	void disassemble_instruction(word inst,std::ostream &out=std::cout)
 	{
@@ -400,8 +407,8 @@ const char * compare_op_name[n_op]={
 			}
 			
 		}
-        else if (opcode == op_sub){
-                out<<"sub ";
+        else if (opcode==op_sub) {
+            out<<"sub ";
         }
 		else out<<"opcode["<<opcode<<"] ";
 		
@@ -424,34 +431,91 @@ const char * compare_op_name[n_op]={
 			
 			disassemble_instruction(fetch,out);
 		}
-	}
-	void print_program(word inst, std::ostream &out=std::cout){
-		word highbits = inst>>32;
-		word lowbits = inst & 0xffffffff;
-		out<<std::hex<<std::setfill('0');
-		if (highbits)
-			out<<"0x"<<std::setw(8)<<highbits;
-		else
-			out<<"        0x";
-		out<<std::setfill('0')<<std::setw(8)<<lowbits<<"   ";
-		out<<std::endl;
+		out<<"\n";
 	}
 };
 
 
-
-long foo(std::vector<std::string> & tester)
+long foo(std::vector<std::string> & test)
 {
 	
-	McSIS::word program[]={
-		0x010081ff,
-		0x0 // terminating zero
+	McSis::word program[]={
+		0x10081ff,
+0x30000ff,
+0xc0089ff,
+0x50081ff,
+0x60082ff,
+0x78f8bff,
+0x200c3ff,
+0x1f5080007ff,
+0x40000ff,
+0x2f4080884ff,
+0xc30081ff,
+0x30381fe,
+0x10082ff,
+0x80086ff,
+0x40081ff,
+0x2f4080884ff,
+0xc30081ff,
+0x30381ff,
+0x10081ff,
+0x80086ff,
+0x40082ff,
+0x2f4080884ff,
+0xc30082ff,
+0x30381ff,
+0x10081ff,
+0x80086ff,
+0x1f6080086ff,
+0x40000ff,
+0x2f4080884ff,
+0xc30081ff,
+0x30381ff,
+0x10081ff,
+0x80086ff,
+0x40081ff,
+0x2f4080884ff,
+0xc30082ff,
+0x30381fe,
+0x10082ff,
+0x80086ff,
+0x40082ff,
+0x2f4080883ff,
+0xc30081ff,
+0x30381ff,
+0x10081ff,
+0x80086ff,
+0x0
 	};
-	McSIS m(program);
-    for (auto i:tester){
-        m.print_program(m.assemble_instruction(i));
+	McSis m(program);
+    McSis::word fetch = m.hashtable(9,0);
+    std::cout<< fetch << std::endl;
+	// m.disassemble_instruction(m.assemble_instruction("add hashtable[AK/DX], r3, $5"));
+	// m.disassemble_instruction(m.assemble_instruction("mov hashtable[r5/DX], $5"));
+	// m.disassemble_instruction(m.assemble_instruction("mov hashtable[r2/DX], $F"));
+	// m.disassemble_instruction(m.assemble_instruction("add r2, $f, $f"));
+	// m.disassemble_instruction(m.assemble_instruction("if(r3<$0) add r2, $f, $f"));
+	// m.disassemble_instruction(m.assemble_instruction("if(DX==$0) add r2, $f, $f"));
+	// m.disassemble_instruction(m.assemble_instruction("mov DX, $6"));
+
+	// m.disassemble();
+	// m.hashtable(17,-3)='1';
+	
+    for (auto i:test){
+       std::cout << std::hex << std::setfill('0') << m.assemble_instruction(i) << std::endl;
     }
+
+
+	m.debug=true;
 	long v=m.run();
+	m.dump_registers();
+    for(int i = -5; i< 25; i++){
+        std::cout << "value at " << i << " in the hashtable is: " << m.hashtable(9,i) << std::endl;
+    }
+    fetch = m.hashtable(9,0);
+    std::cout<< fetch << std::endl;
+
+
 	return v;
 }
 
