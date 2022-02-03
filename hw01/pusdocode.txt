@@ -1,0 +1,52 @@
+mov r1, $1 # load start state 
+mov r3, $0 <- index of tape
+mov DK, $9 <- key of tape
+mov DX, r3 <- vlaue at index on tape
+mov r2, hashtable[DK,DX] <- save the value in the tape to r2
+mov r5, $1 <- lsb #states
+mov r6, $2 <- car #states
+Conditional[r1 = r5] mov PX, $lsb <- state check
+Conditional[r1 = r6] mov PX, $car <- state check
+mov PX, $53
+mov r4, $0 <- car block case 0
+Conditional[r2 == r4] mov PX, $15
+mov PX, $19
+mov hastable[DK, r3], $1
+add r3, r3, $1
+mov r1, $1
+mov PX, $8
+mov r4, $1 <- car block case 1
+Conditional[r2 = r4] mov PX, $22
+mov PX, $26
+mov hastable[DK, r3], $2
+sub r3, r3, $1
+mov r1, $2
+mov PX, $8
+mov r4, $2 <- car block case 2
+Conditional[r2 == r4] mov PX, $29
+mov PX, $53
+mov hastable[DK, r3], $2
+add r3, r3, $1
+mov r1, $1
+mov PX, $8
+mov r4, $0 <- lsb block case 0
+Conditional[r2 = r4] mov PX, $37
+mov PX, $41
+mov hastable[DK, r3], $1
+sub r3, r3, $1
+mov r1, $2
+mov PX, $8
+mov r4, $1 <- lsb block case 1
+Conditional[r2 = r4] mov PX, $44
+mov PX, $48
+mov hastable[DK, r3], $1
+add r3, r3, $1
+mov r1, $2
+mov PX, $8
+mov r4, $2 <- lsb block case 2
+Conditional[r2 = r4] mov PX, $51
+mov PX, $53
+mov hastable[DK, r3], $2
+add r3, r3, $1
+mov r1, $1
+mov PX, $8
